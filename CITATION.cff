@@ -1,0 +1,24 @@
+cff-version: "1.2.0"
+message: If you use this app, please cite it.
+type: software
+title: App Fixtures
+abstract: Builds the test inputs an App Store app declares in its app.yml review block
+  (generator commands, committed files or public datasets) laid out as that app reads its
+  input directory, as the first step of a Pennsieve sample run.
+authors:
+- name: Pennsieve (University of Pennsylvania)
+repository-code: https://github.com/pennsieve-apps/app-fixtures
+license: Apache-2.0
+version: 0.1.0
+keywords:
+- platform
+- testing
+- fixtures
+- ro-crate
+references:
+- type: generic
+  title: "RO-Crate Metadata Specification 1.1"
+  url: https://w3id.org/ro/crate/1.1
+- type: generic
+  title: "Review inputs in app.yml (Pennsieve app-deploy-service)"
+  url: https://github.com/Pennsieve/app-deploy-service/blob/main/docs/app-manifest-review.md

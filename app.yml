@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://schemas.pennsieve.io/app-manifest/v1.json
+# Platform app: materialises another app's test inputs, declared in that
+# app's app.yml review block, as the first step of a sample run. Its output
+# is laid out exactly as the target app reads INPUT_DIR, so the target step
+# simply depends on this one.
+schemaVersion: "1.0"
+application:
+  name: App Fixtures
+  description: >-
+    Builds the test inputs an App Store app declares in its app.yml review block
+    (generator commands, committed files or public datasets from Zenodo, Figshare, OSF
+    and OpenNeuro) and writes them laid out as that app reads its input directory.
+    The first step of a sample run; the sampled app depends on it.
+  type: processor
+  tags:
+    - platform
+    - testing
+runtime:
+  cpu: 2048
+  memory: 4096
+  timeoutSeconds: 1800
+  computeTypes:
+    - standard
+  # Generators and dataset fetches need the network and a writable scratch
+  # directory of unknown size: always an ECS task.
+  optimize: false
+parameters:
+  - name: REPOSITORY
+    type: string
+    description: The target app's GitHub repository URL, e.g. https://github.com/pennsieve-apps/sc-markers.
+    required: true
+  - name: TAG
+    type: string
+    description: The target app's release tag, e.g. v0.1.2. Its app.yml at that tag is read.
+    required: true
+  - name: PORTS
+    type: string
+    description: >-
+      Comma-separated input ports to build. Empty builds every port the review block covers.
+    defaultValue: ""
+    required: false
+  - name: MAX_DATASET_BYTES
+    type: integer
+    description: The most a public dataset fetch may download, in bytes.
+    defaultValue: 2147483648
+    min: 1
+    required: false
+  - name: GENERATE_TIMEOUT
+    type: integer
+    description: Seconds a generator command may run.
+    defaultValue: 900
+    min: 1
+    required: false
+inputs: []
+outputs:
+  - name: fixtures
+    description: >-
+      The target app's input directory: ports with placement subfolder in their own
+      folders, the rest at the root, plus .pennsieve-fixtures/ro-crate-metadata.json
+      describing where each port's data came from.
