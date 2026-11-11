@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from processor import crate, main
+from processor import crate, errors, main
 
 APP_YML = """
 schemaVersion: "1.0"
@@ -109,19 +109,59 @@ def test_ports_subset(monkeypatch, tmp_path, repo):
     assert not (out / "cells").exists()
 
 
-def test_unknown_port_and_missing_tag_fail(monkeypatch, tmp_path, repo):
-    code, _ = run(monkeypatch, tmp_path, repo, PORTS="nope")
-    assert code == 1
-    code, _ = run(monkeypatch, tmp_path, repo, TAG="v9.9.9")
-    assert code == 1
+def error_of(out, capsys):
+    """The failure as a service reads it: the FIXTURES_ERROR line and error.json agree."""
+    lines = [l for l in capsys.readouterr().out.splitlines() if l.startswith(errors.MARKER)]
+    assert len(lines) == 1
+    marker = json.loads(lines[0][len(errors.MARKER):])
+    on_disk = json.loads((out / crate.CRATE_DIR / "error.json").read_text())
+    assert marker == on_disk
+    return marker
 
 
-def test_required_port_without_source_fails(monkeypatch, tmp_path, repo):
-    (repo / "app.yml").write_text(APP_YML.replace("  generate:\n    command: python3 tests/make_fixture.py \"$REVIEW_INPUT_DIR\"\n    root: linked\n", ""))
-    git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-am", "no generator")
+def test_unknown_port_is_a_declaration_problem(monkeypatch, tmp_path, repo, capsys):
+    code, out = run(monkeypatch, tmp_path, repo, PORTS="nope")
+    assert code == 3
+    e = error_of(out, capsys)
+    assert e["code"] == "unknown_port" and e["port"] == "nope" and e["declarationProblem"] is True
+    assert e["hint"] and e["docs"].startswith("https://") and e["target"]["tag"] == "v0.1.0"
+
+
+def test_missing_tag_is_a_build_failure(monkeypatch, tmp_path, repo, capsys):
+    code, out = run(monkeypatch, tmp_path, repo, TAG="v9.9.9")
+    assert code == 1
+    e = error_of(out, capsys)
+    assert e["code"] == "clone_failed" and e["declarationProblem"] is False and "hint" not in e
+
+
+def recommit(repo, app_yml):
+    (repo / "app.yml").write_text(app_yml)
+    git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-am", "edit app.yml")
     git(repo, "tag", "-f", "v0.1.0")
-    code, _ = run(monkeypatch, tmp_path, repo)
+
+
+def test_required_port_without_source(monkeypatch, tmp_path, repo, capsys):
+    recommit(repo, APP_YML.replace("  generate:\n    command: python3 tests/make_fixture.py \"$REVIEW_INPUT_DIR\"\n    root: linked\n", ""))
+    code, out = run(monkeypatch, tmp_path, repo)
+    assert code == 3
+    e = error_of(out, capsys)
+    assert e["code"] == "no_source_for_port" and e["port"] == "cells" and "review.inputs" in e["hint"]
+
+
+def test_no_review_block(monkeypatch, tmp_path, repo, capsys):
+    recommit(repo, APP_YML.split("review:")[0])
+    code, out = run(monkeypatch, tmp_path, repo)
+    assert code == 3
+    e = error_of(out, capsys)
+    assert e["code"] == "no_review_block" and "review" in e["hint"] and e["target"]["commit"]
+
+
+def test_generator_failure_is_a_build_failure(monkeypatch, tmp_path, repo, capsys):
+    recommit(repo, APP_YML.replace('python3 tests/make_fixture.py "$REVIEW_INPUT_DIR"', "exit 7"))
+    code, out = run(monkeypatch, tmp_path, repo)
     assert code == 1
+    e = error_of(out, capsys)
+    assert e["code"] == "generator_failed" and "exited 7" in e["message"]
 
 
 def test_missing_configuration(monkeypatch):

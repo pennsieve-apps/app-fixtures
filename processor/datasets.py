@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
-from .errors import FixtureError
+from .errors import DATASET_TOO_LARGE, DATASET_UNAVAILABLE, INVALID_REVIEW_BLOCK, FixtureError
 from .manifest import Dataset
 
 log = logging.getLogger("fixtures")
@@ -51,9 +51,9 @@ class Resolved:
 def _request(url: str, method: str = "GET") -> urllib.request.Request:
     host = urllib.parse.urlparse(url).hostname or ""
     if not any(host == h or host.endswith("." + h) for h in ALLOWED_HOSTS):
-        raise FixtureError(f"{url}: host {host!r} is not an allowed dataset host ({', '.join(ALLOWED_HOSTS)})")
+        raise FixtureError(f"{url}: host {host!r} is not an allowed dataset host ({', '.join(ALLOWED_HOSTS)})", INVALID_REVIEW_BLOCK)
     if urllib.parse.urlparse(url).scheme != "https":
-        raise FixtureError(f"{url}: only https is allowed")
+        raise FixtureError(f"{url}: only https is allowed", INVALID_REVIEW_BLOCK)
     return urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT})
 
 
@@ -187,7 +187,7 @@ def resolve(ds: Dataset) -> Resolved:
         elif m := DOI_OSF.match(doi):
             res = _osf(m.group(1))
         else:
-            raise FixtureError(f"DOI {doi} is not on an allowed host (Zenodo, Figshare, OSF, OpenNeuro)")
+            raise FixtureError(f"DOI {doi} is not on an allowed host (Zenodo, Figshare, OSF, OpenNeuro)", INVALID_REVIEW_BLOCK)
         res.identifier = f"doi:{doi}"
     else:
         url = (ds.url or "").strip()
@@ -208,7 +208,7 @@ def resolve(ds: Dataset) -> Resolved:
     if ds.files:
         res.files = [f for f in res.files if _matches(f.path, ds.files)]
     if not res.files:
-        raise FixtureError(f"{res.identifier}: no files match {list(ds.files) or 'the dataset'}")
+        raise FixtureError(f"{res.identifier}: no files match {list(ds.files) or 'the dataset'}", DATASET_UNAVAILABLE)
     return res
 
 
@@ -218,12 +218,12 @@ def download(res: Resolved, dest: Path, max_bytes: int) -> list[dict]:
     when the total does."""
     known = sum(f.size for f in res.files if f.size)
     if known > max_bytes:
-        raise FixtureError(f"{res.identifier}: {known} bytes exceed MAX_DATASET_BYTES={max_bytes}")
+        raise FixtureError(f"{res.identifier}: {known} bytes exceed MAX_DATASET_BYTES={max_bytes}", DATASET_TOO_LARGE)
     total = 0
     out = []
     for f in res.files:
         if ".." in Path(f.path).parts or f.path.startswith("/"):
-            raise FixtureError(f"{res.identifier}: refusing path {f.path!r}")
+            raise FixtureError(f"{res.identifier}: refusing path {f.path!r}", DATASET_UNAVAILABLE)
         target = dest / f.path
         target.parent.mkdir(parents=True, exist_ok=True)
         digest = hashlib.sha256()
@@ -234,7 +234,7 @@ def download(res: Resolved, dest: Path, max_bytes: int) -> list[dict]:
                 size += len(chunk)
                 total += len(chunk)
                 if total > max_bytes:
-                    raise FixtureError(f"{res.identifier}: download exceeds MAX_DATASET_BYTES={max_bytes}")
+                    raise FixtureError(f"{res.identifier}: download exceeds MAX_DATASET_BYTES={max_bytes}", DATASET_TOO_LARGE)
                 digest.update(chunk)
                 w.write(chunk)
         out.append({"path": f.path, "url": f.url, "size": size, "sha256": digest.hexdigest()})

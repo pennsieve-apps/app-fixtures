@@ -6,8 +6,12 @@ INPUT_DIR: ports with placement: subfolder in their own folders, the rest at
 the root. A step that depends only on this one gets this directory as its
 INPUT_DIR unchanged.
 
-Exit 0 when every required port has data; 1 when a fixture cannot be built
-(the log says which); 2 for a bad configuration.
+Exit 0 when every required port has data; 3 when the app declares no usable
+test data (no review block, a port without a source: its author must change
+app.yml); 1 when the declared data could not be built here (a generator
+failed, a dataset was unavailable); 2 for a bad configuration. Every failure
+is also one FIXTURES_ERROR line in the log and .pennsieve-fixtures/error.json
+in the output, with a stable code (errors.py).
 """
 from __future__ import annotations
 
@@ -22,13 +26,13 @@ import tempfile
 from pathlib import Path
 
 from . import crate, datasets, sources
-from .errors import FixtureError
+from .errors import CLONE_FAILED, EMPTY_PORT, NO_REVIEW_BLOCK, NO_SOURCE_FOR_PORT, UNKNOWN_PORT, FixtureError
 from .manifest import Dataset, Manifest, Port, load
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger("fixtures")
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 
 def clone(repository: str, tag: str, scratch: Path) -> tuple[Path, str]:
@@ -38,7 +42,7 @@ def clone(repository: str, tag: str, scratch: Path) -> tuple[Path, str]:
     log.info("clone %s at %s", repository, tag)
     proc = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
     if proc.returncode != 0:
-        raise FixtureError(f"git clone failed: {proc.stderr.strip() or proc.stdout.strip()}")
+        raise FixtureError(f"git clone failed: {proc.stderr.strip() or proc.stdout.strip()}", CLONE_FAILED)
     commit = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     return dest, commit
 
@@ -80,12 +84,12 @@ def fetch_source(ds: Dataset, scratch: Path, max_bytes: int) -> tuple[Path, dict
 
 def build(manifest: Manifest, repo: Path, output: Path, scratch: Path, *, ports: list[str] | None, max_bytes: int, timeout: int) -> list[dict]:
     if not manifest.has_review:
-        raise FixtureError("the app's app.yml has no review block, so it declares no test inputs")
+        raise FixtureError("the app's app.yml has no review block, so it declares no test inputs", NO_REVIEW_BLOCK)
     wanted = [p for p in manifest.inputs if not ports or p.name in ports]
     if ports:
         unknown = sorted(set(ports) - {p.name for p in manifest.inputs})
         if unknown:
-            raise FixtureError(f"PORTS names inputs the app does not declare: {', '.join(unknown)}")
+            raise FixtureError(f"PORTS names inputs the app does not declare: {', '.join(unknown)}", UNKNOWN_PORT, port=unknown[0])
     own = {p.name: manifest.port_sources[p.name] for p in wanted if p.name in manifest.port_sources}
     from_generate = [p for p in wanted if p.name not in own]
     built: dict[str, dict] = {}
@@ -116,7 +120,8 @@ def build(manifest: Manifest, repo: Path, output: Path, scratch: Path, *, ports:
             raise FixtureError(
                 "the review block gives no source for required input(s): "
                 + ", ".join(p.name for p in missing)
-                + " (add review.generate or review.inputs.<port>)"
+                + " (add review.generate or review.inputs.<port>)",
+                NO_SOURCE_FOR_PORT, port=missing[0].name,
             )
 
     # Ports with their own source.
@@ -156,13 +161,32 @@ def build(manifest: Manifest, repo: Path, output: Path, scratch: Path, *, ports:
         else:
             files = files_under(output, subfolders | {crate.CRATE_DIR})
         if not files and p.required:
-            raise FixtureError(f"required input {p.name!r} received no files from its source")
+            raise FixtureError(f"required input {p.name!r} received no files from its source", EMPTY_PORT, port=p.name)
         if not files:
             log.info("optional input %s received no files; left out", p.name)
             continue
         report.append({"name": p.name, "placement": p.placement, "source": built[p.name], "files": describe_files(output, files)})
         log.info("input %s: %d file(s), %s", p.name, len(files), built[p.name]["kind"])
     return report
+
+
+def report_error(e: FixtureError, out: Path, target: dict) -> int:
+    """The failure, for a person (the log) and a service (one FIXTURES_ERROR
+    line, and .pennsieve-fixtures/error.json): exit 3 when the app's own
+    declaration is the problem, 1 when its declared data could not be built."""
+    if e.declaration_problem:
+        log.error("%s declares no usable test data: %s", target.get("repository"), e)
+        log.error("hint: %s (%s)", e.as_dict()["hint"], e.as_dict()["docs"])
+    else:
+        log.error("could not build the test data of %s: %s", target.get("repository"), e)
+    try:
+        err_dir = out / crate.CRATE_DIR
+        err_dir.mkdir(parents=True, exist_ok=True)
+        (err_dir / "error.json").write_text(json.dumps(e.as_dict(target), indent=2))
+    except OSError:
+        pass
+    print(e.marker_line(target), flush=True)
+    return 3 if e.declaration_problem else 1
 
 
 def main() -> int:
@@ -185,11 +209,13 @@ def main() -> int:
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="fixtures-"))
+    target = {"repository": repository, "tag": tag}
     try:
         repo, commit = clone(repository, tag, scratch)
+        target["commit"] = commit
         manifest = load(repo / "app.yml")
         report = build(manifest, repo, out, scratch, ports=ports, max_bytes=max_bytes, timeout=timeout)
-        target = {"name": manifest.name, "repository": repository, "tag": tag, "commit": commit}
+        target["name"] = manifest.name
         doc = crate.build(target, report, VERSION)
         crate_dir = out / crate.CRATE_DIR
         crate_dir.mkdir(exist_ok=True)
@@ -203,8 +229,7 @@ def main() -> int:
         log.info("built %d input(s) for %s %s into %s", len(report), manifest.name or repository, tag, out)
         return 0
     except FixtureError as e:
-        log.error("%s", e)
-        return 1
+        return report_error(e, out, target)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 

@@ -78,10 +78,23 @@ make run         # build the fixtures of the app in dev.env, in Docker, into dat
 The end-to-end test uses a local git repository as the target, so it runs
 offline. Dataset hosts are exercised against recorded responses.
 
-## Exit codes
+## When it cannot build
 
-`0` built; `1` a fixture could not be built, the log says which port and why;
-`2` missing or invalid parameters.
+Every failure is reported three ways so both a person and a service can act
+on it: a log line, one `FIXTURES_ERROR {...}` line in the log, and
+`.pennsieve-fixtures/error.json` in the output. The JSON has a stable `code`,
+the `message`, the `port` when one is at fault, the `target` (repository, tag,
+commit when cloned), and, when the app's own declaration is the problem, a
+`hint` for its author and a `docs` link.
+
+| Exit | Meaning | Codes |
+|---|---|---|
+| `3` | The app declares no usable test data; its author must change `app.yml`. A sample run should show this as "no test data declared", not as a failed run. | `no_review_block`, `no_source_for_port`, `unknown_port`, `invalid_review_block`, `files_not_found` |
+| `1` | The declared test data could not be built here. | `clone_failed`, `generator_failed`, `generator_image_unavailable`, `dataset_unavailable`, `dataset_too_large`, `empty_port`, `internal` |
+| `2` | Missing or invalid parameters (`OUTPUT_DIR`, `REPOSITORY`, `TAG`). | |
+
+An app without a `review` block is the common case for releases made before
+the block existed: the fix is a new release that carries one.
 
 ## License
 

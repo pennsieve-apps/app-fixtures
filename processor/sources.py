@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .errors import FixtureError
+from .errors import FILES_NOT_FOUND, GENERATOR_FAILED, GENERATOR_IMAGE_UNAVAILABLE, INVALID_REVIEW_BLOCK, FixtureError
 from .manifest import Generate
 
 log = logging.getLogger("fixtures")
@@ -24,10 +24,11 @@ def run_generate(gen: Generate, repo: Path, source_dir: Path | None, timeout: in
     directory holding what it wrote (its `root` within $REVIEW_INPUT_DIR)."""
     if gen.image not in GENERATOR_IMAGES:
         raise FixtureError(
-            f"generator image {gen.image!r} is not available in this app yet (only {', '.join(GENERATOR_IMAGES)})"
+            f"generator image {gen.image!r} is not available in this app yet (only {', '.join(GENERATOR_IMAGES)})",
+            GENERATOR_IMAGE_UNAVAILABLE,
         )
     if gen.source and source_dir is None:
-        raise FixtureError("generator names a source but none was fetched")
+        raise FixtureError("generator names a source but none was fetched", GENERATOR_FAILED)
     out = Path(tempfile.mkdtemp(prefix="gen-", dir=scratch))
     env = dict(os.environ)
     env["REVIEW_INPUT_DIR"] = str(out)
@@ -44,22 +45,22 @@ def run_generate(gen: Generate, repo: Path, source_dir: Path | None, timeout: in
             text=True,
         )
     except subprocess.TimeoutExpired:
-        raise FixtureError(f"generator did not finish within {timeout} s: {gen.command}")
+        raise FixtureError(f"generator did not finish within {timeout} s: {gen.command}", GENERATOR_FAILED)
     if proc.stdout.strip():
         log.info("generator stdout:\n%s", proc.stdout.rstrip()[-4000:])
     if proc.stderr.strip():
         log.info("generator stderr:\n%s", proc.stderr.rstrip()[-4000:])
     if proc.returncode != 0:
-        raise FixtureError(f"generator exited {proc.returncode}: {gen.command}")
+        raise FixtureError(f"generator exited {proc.returncode}: {gen.command}", GENERATOR_FAILED)
     if not out.is_dir():
-        raise FixtureError("generator removed $REVIEW_INPUT_DIR; it must write into it")
+        raise FixtureError("generator removed $REVIEW_INPUT_DIR; it must write into it", GENERATOR_FAILED)
     root = out / gen.root if gen.root else out
     if gen.root and (".." in Path(gen.root).parts or Path(gen.root).is_absolute()):
-        raise FixtureError(f"generate.root {gen.root!r} must be a relative path within what the generator wrote")
+        raise FixtureError(f"generate.root {gen.root!r} must be a relative path within what the generator wrote", INVALID_REVIEW_BLOCK)
     if not root.is_dir():
-        raise FixtureError(f"generator wrote no {gen.root!r} folder under $REVIEW_INPUT_DIR")
+        raise FixtureError(f"generator wrote no {gen.root!r} folder under $REVIEW_INPUT_DIR", GENERATOR_FAILED)
     if not any(root.rglob("*")):
-        raise FixtureError(f"generator wrote nothing under {root}")
+        raise FixtureError(f"generator wrote nothing under {root}", GENERATOR_FAILED)
     return root
 
 
@@ -82,10 +83,10 @@ def copy_files(repo: Path, patterns: tuple[str, ...], dest: Path) -> list[str]:
     written: list[str] = []
     for pattern in patterns:
         if pattern.startswith("/") or ".." in Path(pattern).parts:
-            raise FixtureError(f"files pattern {pattern!r} must be relative, without ..")
+            raise FixtureError(f"files pattern {pattern!r} must be relative, without ..", INVALID_REVIEW_BLOCK)
         matches = sorted(glob.glob(str(repo / pattern), recursive=True))
         if not matches:
-            raise FixtureError(f"files pattern {pattern!r} matches nothing in the repository")
+            raise FixtureError(f"files pattern {pattern!r} matches nothing in the repository", FILES_NOT_FOUND)
         prefix = repo / _static_prefix(pattern)
         for m in matches:
             src = Path(m)
