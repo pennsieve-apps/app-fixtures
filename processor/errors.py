@@ -21,6 +21,10 @@ DATASET_UNAVAILABLE = "dataset_unavailable"
 DATASET_TOO_LARGE = "dataset_too_large"
 FILES_NOT_FOUND = "files_not_found"
 EMPTY_PORT = "empty_port"
+# A BUNDLE_URL could not be used (bundle.py).
+BUNDLE_UNAVAILABLE = "bundle_unavailable"
+BUNDLE_TOO_LARGE = "bundle_too_large"
+BUNDLE_INVALID = "bundle_invalid"
 # Anything else.
 INTERNAL = "internal"
 

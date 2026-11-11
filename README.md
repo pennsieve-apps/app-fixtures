@@ -55,6 +55,7 @@ network, are a separate design.
 | `PORTS` | Comma-separated input ports to build; empty builds every port the review block covers | all |
 | `MAX_DATASET_BYTES` | The most a dataset fetch may download | 2 GiB |
 | `GENERATE_TIMEOUT` | Seconds a generator command may run | 900 |
+| `BUNDLE_URL` | A presigned URL of a fixture bundle the release pipeline built for this app and tag; set, it is unpacked instead of cloning and generating (`MAX_DATASET_BYTES` caps the download) | none |
 
 No inputs. One output, `fixtures`, which is the whole output directory.
 
@@ -67,6 +68,18 @@ then reads its usual `INPUT_DIR`.
 
 The provenance crate sits in a dot-folder so that an app which globs the root
 of its input directory does not pick it up.
+
+### From a bundle
+
+The App Store builds these fixtures once per release (app-deploy-service,
+"Fixture bundles") and keeps the output directory as a `.tar.gz`. A sample
+run on a node that may not have internet, or that should not fetch again,
+passes that bundle's presigned URL as `BUNDLE_URL`: the app unpacks it into
+the output, prints one `FIXTURES_BUNDLE {...}` line, and exits 0. A bundle
+that records a failed build (`.pennsieve-fixtures/error.json`) is reported
+exactly as that failure would be here: the same `FIXTURES_ERROR` line and
+exit status. The bundle must be a plain tar.gz of regular files;
+anything else (links, paths outside the output) is skipped.
 
 ## Developing
 
@@ -90,7 +103,7 @@ commit when cloned), and, when the app's own declaration is the problem, a
 | Exit | Meaning | Codes |
 |---|---|---|
 | `3` | The app declares no usable test data; its author must change `app.yml`. A sample run should show this as "no test data declared", not as a failed run. | `no_review_block`, `no_source_for_port`, `unknown_port`, `invalid_review_block`, `files_not_found` |
-| `1` | The declared test data could not be built here. | `clone_failed`, `generator_failed`, `generator_image_unavailable`, `dataset_unavailable`, `dataset_too_large`, `empty_port`, `internal` |
+| `1` | The declared test data could not be built here. | `clone_failed`, `generator_failed`, `generator_image_unavailable`, `dataset_unavailable`, `dataset_too_large`, `empty_port`, `bundle_unavailable`, `bundle_too_large`, `bundle_invalid`, `internal` |
 | `2` | Missing or invalid parameters (`OUTPUT_DIR`, `REPOSITORY`, `TAG`). | |
 
 An app without a `review` block is the common case for releases made before

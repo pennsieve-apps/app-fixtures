@@ -51,6 +51,13 @@ parameters:
     defaultValue: 900
     min: 1
     required: false
+  - name: BUNDLE_URL
+    type: string
+    description: >-
+      A presigned URL of a fixture bundle the release pipeline built for this app and tag
+      (.tar.gz). Set, it is unpacked into the output instead of cloning and generating.
+    defaultValue: ""
+    required: false
 inputs: []
 outputs:
   - name: fixtures

@@ -25,14 +25,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import crate, datasets, sources
-from .errors import CLONE_FAILED, EMPTY_PORT, NO_REVIEW_BLOCK, NO_SOURCE_FOR_PORT, UNKNOWN_PORT, FixtureError
+from . import bundle, crate, datasets, sources
+from .errors import CLONE_FAILED, EMPTY_PORT, INTERNAL, NO_REVIEW_BLOCK, NO_SOURCE_FOR_PORT, UNKNOWN_PORT, FixtureError
 from .manifest import Dataset, Manifest, Port, load
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger("fixtures")
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 
 def clone(repository: str, tag: str, scratch: Path) -> tuple[Path, str]:
@@ -189,6 +189,30 @@ def report_error(e: FixtureError, out: Path, target: dict) -> int:
     return 3 if e.declaration_problem else 1
 
 
+BUNDLE_MARKER = "FIXTURES_BUNDLE "
+
+
+def from_bundle(url: str, out: Path, target: dict, max_bytes: int) -> int:
+    """BUNDLE_URL mode: unpack a bundle the release pipeline built instead of
+    cloning and generating. A failed build's error.json inside it is
+    reported exactly as a failure here would be."""
+    try:
+        info = bundle.unpack(url, out, max_bytes)
+    except FixtureError as e:
+        return report_error(e, out, target)
+    err_file = out / crate.CRATE_DIR / "error.json"
+    if err_file.is_file():
+        try:
+            recorded = json.loads(err_file.read_text())
+        except ValueError:
+            recorded = {}
+        e = FixtureError(str(recorded.get("message") or "the bundle records a failed fixture build"), str(recorded.get("code") or INTERNAL), recorded.get("port"))
+        return report_error(e, out, target)
+    print(BUNDLE_MARKER + json.dumps({"target": target, **info}, separators=(",", ":")), flush=True)
+    log.info("unpacked the fixture bundle of %s %s into %s", target["repository"], target["tag"], out)
+    return 0
+
+
 def main() -> int:
     output = os.environ.get("OUTPUT_DIR")
     repository = (os.environ.get("REPOSITORY") or "").strip()
@@ -208,8 +232,11 @@ def main() -> int:
         return 2
     out = Path(output)
     out.mkdir(parents=True, exist_ok=True)
-    scratch = Path(tempfile.mkdtemp(prefix="fixtures-"))
     target = {"repository": repository, "tag": tag}
+    bundle_url = (os.environ.get("BUNDLE_URL") or "").strip()
+    if bundle_url:
+        return from_bundle(bundle_url, out, target, max_bytes)
+    scratch = Path(tempfile.mkdtemp(prefix="fixtures-"))
     try:
         repo, commit = clone(repository, tag, scratch)
         target["commit"] = commit
