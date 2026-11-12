@@ -39,7 +39,7 @@ Given a repository URL and a release tag:
 Generators run with `sh -c` from the repository root, in this image, which
 carries the libraries the review docs promise generators (numpy, pandas,
 scipy, h5py, anndata, zarr, scanpy, FlowIO, edfio, nibabel, pyarrow,
-openpyxl). The `r` generator image is not available yet; a block that asks
+openpyxl, pynwb with ndx-pose). The `r` generator image is not available yet; a block that asks
 for it fails with a clear message.
 
 Unlike a review, a sample run has the network: the clone, the dataset fetch
