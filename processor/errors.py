@@ -20,6 +20,7 @@ GENERATOR_IMAGE_UNAVAILABLE = "generator_image_unavailable"
 DATASET_UNAVAILABLE = "dataset_unavailable"
 DATASET_TOO_LARGE = "dataset_too_large"
 FILES_NOT_FOUND = "files_not_found"
+DUPLICATE_FILE_NAME = "duplicate_file_name"
 EMPTY_PORT = "empty_port"
 # A BUNDLE_URL could not be used (bundle.py).
 BUNDLE_UNAVAILABLE = "bundle_unavailable"
@@ -36,6 +37,7 @@ DECLARATION = {
     UNKNOWN_PORT: "The review block (or PORTS) names an input port app.yml does not declare.",
     INVALID_REVIEW_BLOCK: "Fix the review block so it validates against the app manifest schema.",
     FILES_NOT_FOUND: "The `files` patterns match nothing in the repository at this tag.",
+    DUPLICATE_FILE_NAME: "Two test input files have the same name, and filePaths flat puts both at the port's root: narrow `files`, or set `filePaths: source` to keep their paths.",
 }
 
 MARKER = "FIXTURES_ERROR "
