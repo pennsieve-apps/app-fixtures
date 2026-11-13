@@ -38,12 +38,20 @@ class Generate:
     source: Dataset | None = None
 
 
+# How committed files and dataset files are laid out in the port, as the
+# file paths of workflow and notebook data sources: "flat" puts every file at
+# the port's root (the default), "source" keeps its path (below the pattern's
+# fixed part for committed files; within the dataset for a dataset).
+FILE_PATHS = ("flat", "source")
+
+
 @dataclass(frozen=True)
 class PortSource:
     kind: str  # "generate" | "files" | "dataset"
     generate: Generate | None = None
     files: tuple[str, ...] = ()
     dataset: Dataset | None = None
+    file_paths: str = "flat"
 
 
 @dataclass(frozen=True)
@@ -90,9 +98,19 @@ def _generate(raw: dict, where: str) -> Generate:
 
 def _port_source(name: str, raw: dict) -> PortSource:
     where = f"review.inputs.{name}"
-    if not isinstance(raw, dict) or len(raw) != 1:
+    if not isinstance(raw, dict):
+        raise FixtureError(f"{where}: exactly one of generate, files or dataset", INVALID_REVIEW_BLOCK)
+    raw = dict(raw)
+    file_paths = raw.pop("filePaths", None)
+    if len(raw) != 1:
         raise FixtureError(f"{where}: exactly one of generate, files or dataset", INVALID_REVIEW_BLOCK)
     (kind, value), = raw.items()
+    if file_paths is not None:
+        if kind not in ("files", "dataset"):
+            raise FixtureError(f"{where}: filePaths applies to files and dataset only", INVALID_REVIEW_BLOCK)
+        if file_paths not in FILE_PATHS:
+            raise FixtureError(f"{where}: filePaths must be flat or source", INVALID_REVIEW_BLOCK)
+    file_paths = file_paths or "flat"
     if kind == "generate":
         return PortSource("generate", generate=_generate(value, where))
     if kind == "files":
@@ -102,9 +120,9 @@ def _port_source(name: str, raw: dict) -> PortSource:
         for p in patterns:
             if p.startswith("/") or ".." in Path(p).parts:
                 raise FixtureError(f"{where}: {p!r} must be relative, without ..", INVALID_REVIEW_BLOCK)
-        return PortSource("files", files=patterns)
+        return PortSource("files", files=patterns, file_paths=file_paths)
     if kind == "dataset":
-        return PortSource("dataset", dataset=_dataset(value, where))
+        return PortSource("dataset", dataset=_dataset(value, where), file_paths=file_paths)
     raise FixtureError(f"{where}: unknown source {kind!r}", INVALID_REVIEW_BLOCK)
 
 

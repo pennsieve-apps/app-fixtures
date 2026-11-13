@@ -132,8 +132,10 @@ def build(manifest: Manifest, repo: Path, output: Path, scratch: Path, *, ports:
         dest = port_dir(output, p)
         dest.mkdir(parents=True, exist_ok=True)
         if src.kind == "files":
-            sources.copy_files(repo, src.files, dest)
-            built[p.name] = {"kind": "files", "patterns": list(src.files)}
+            staged = scratch / f"files-{p.name}"
+            sources.copy_files(repo, src.files, staged)
+            sources.place(staged, dest, src.file_paths, f"review.inputs.{p.name}.files")
+            built[p.name] = {"kind": "files", "patterns": list(src.files), "filePaths": src.file_paths}
         elif src.kind == "generate":
             gen = src.generate
             source_dir, source_prov = (None, None)
@@ -147,8 +149,10 @@ def build(manifest: Manifest, repo: Path, output: Path, scratch: Path, *, ports:
             built[p.name] = prov
         elif src.kind == "dataset":
             res = datasets.resolve(src.dataset)
-            got = datasets.download(res, dest, max_bytes)
-            built[p.name] = {"kind": "dataset", "identifier": res.identifier, "landing": res.landing, "doi": src.dataset.doi, "url": src.dataset.url, "patterns": list(src.dataset.files), "sourceFiles": got}
+            staged = scratch / f"dataset-{p.name}"
+            got = datasets.download(res, staged, max_bytes)
+            sources.place(staged, dest, src.file_paths, f"review.inputs.{p.name}.dataset")
+            built[p.name] = {"kind": "dataset", "identifier": res.identifier, "landing": res.landing, "doi": src.dataset.doi, "url": src.dataset.url, "patterns": list(src.dataset.files), "filePaths": src.file_paths, "sourceFiles": got}
 
     # Verify and describe.
     subfolders = {p.name for p in manifest.inputs if p.placement == "subfolder"}

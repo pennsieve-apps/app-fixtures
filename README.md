@@ -20,12 +20,19 @@ Given a repository URL and a release tag:
      directory into `$REVIEW_INPUT_DIR` (its `root` folder is taken), for every
      port that has no source of its own;
    - `review.inputs.<port>.generate`: a command that writes that port's data;
-   - `review.inputs.<port>.files`: files or globs committed in the repository,
-     keeping their paths below the pattern's fixed prefix;
+   - `review.inputs.<port>.files`: files or globs committed in the repository;
    - `review.inputs.<port>.dataset`: a public dataset by DOI or HTTPS URL on
-     Zenodo, Figshare, OSF or OpenNeuro, narrowed to `files` patterns, within
+     Pennsieve Discover (a 10.26275 DOI or a discover.pennsieve.io dataset URL),
+     Zenodo, Figshare, OSF or OpenNeuro, narrowed to `files` patterns (a plain
+     path names a file or a folder; Discover fetches plain paths without
+     listing the dataset), within
      `MAX_DATASET_BYTES`. A generator's `source` is fetched the same way and
      mounted at `$REVIEW_SOURCE_DIR`.
+   - `review.inputs.<port>.filePaths` (with `files` or `dataset`): `flat`, the
+     default, puts every file at the port's root (two files with one name are
+     refused, `duplicate_file_name`); `source` keeps each file's path, below
+     the pattern's fixed part for committed files and within the dataset for
+     a dataset. As workflow and notebook data sources do.
 3. Lays the result out as the app's `INPUT_DIR`: ports with
    `placement: subfolder` in `<port>/`, the rest at the root.
 4. Checks that every required port received files. An optional port without

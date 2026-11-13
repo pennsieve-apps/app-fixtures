@@ -168,3 +168,44 @@ def test_missing_configuration(monkeypatch):
     monkeypatch.delenv("OUTPUT_DIR", raising=False)
     monkeypatch.delenv("REPOSITORY", raising=False)
     assert main.main() == 2
+
+
+NESTED_APP = """
+schemaVersion: "1.0"
+application: {name: Nested, type: processor}
+inputs:
+  - name: flat
+    placement: subfolder
+  - name: kept
+    placement: subfolder
+outputs:
+  - name: out
+review:
+  version: 1
+  inputs:
+    flat:
+      files: [samples/**/*.csv]
+    kept:
+      files: [samples/**/*.csv]
+      filePaths: source
+"""
+
+
+def test_file_paths_flat_by_default_or_kept(monkeypatch, tmp_path):
+    repo = tmp_path / "nested-app"
+    for rel in ("samples/a/one.csv", "samples/b/c/two.csv"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(rel)
+    (repo / "app.yml").write_text(NESTED_APP)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "add", ".")
+    git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init")
+    git(repo, "tag", "v0.1.0")
+    code, out = run(monkeypatch, tmp_path, repo)
+    assert code == 0
+    assert sorted(p.name for p in (out / "flat").iterdir()) == ["one.csv", "two.csv"]
+    assert (out / "kept" / "a" / "one.csv").exists() and (out / "kept" / "b" / "c" / "two.csv").exists()
+    doc = json.loads((out / crate.CRATE_DIR / crate.CRATE_FILE).read_text())
+    ids = {e["@id"]: e for e in doc["@graph"]}
+    assert ids["flat/"]["pennsieve:source"]["filePaths"] == "flat"
+    assert ids["kept/"]["pennsieve:source"]["filePaths"] == "source"

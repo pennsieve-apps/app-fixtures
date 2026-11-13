@@ -4,6 +4,7 @@ import pytest
 
 from processor.errors import FixtureError
 from processor.manifest import Generate
+from processor import sources
 from processor.sources import copy_files, copy_tree, run_generate
 
 
@@ -80,3 +81,33 @@ def test_copy_tree_merges(tmp_path):
     (dst / "b" / "two.txt").write_text("2")
     copy_tree(src, dst)
     assert (dst / "a" / "one.txt").exists() and (dst / "b" / "two.txt").exists()
+
+
+def staged(tmp_path, *paths):
+    src = tmp_path / "staged"
+    for rel in paths:
+        f = src / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(rel)
+    return src
+
+
+def test_place_flat_puts_every_file_at_the_root(tmp_path):
+    src = staged(tmp_path, "files/primary/sub-1/a.fcs", "files/primary/sub-2/b.fcs")
+    dest = tmp_path / "port"
+    assert sources.place(src, dest, "flat", "review.inputs.fcs.dataset") == ["a.fcs", "b.fcs"]
+    assert sorted(p.name for p in dest.iterdir()) == ["a.fcs", "b.fcs"]
+
+
+def test_place_source_keeps_paths(tmp_path):
+    src = staged(tmp_path, "sub-01/anat/t1.nii.gz")
+    dest = tmp_path / "port"
+    assert sources.place(src, dest, "source", "x") == ["sub-01/anat/t1.nii.gz"]
+    assert (dest / "sub-01" / "anat" / "t1.nii.gz").read_text() == "sub-01/anat/t1.nii.gz"
+
+
+def test_place_flat_refuses_two_files_with_one_name(tmp_path):
+    src = staged(tmp_path, "sub-1/scan.nii.gz", "sub-2/scan.nii.gz")
+    with pytest.raises(FixtureError, match="would both be scan.nii.gz") as err:
+        sources.place(src, tmp_path / "port", "flat", "review.inputs.image.dataset")
+    assert err.value.code == "duplicate_file_name" and err.value.declaration_problem

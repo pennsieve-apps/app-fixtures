@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from .errors import FILES_NOT_FOUND, GENERATOR_FAILED, GENERATOR_IMAGE_UNAVAILABLE, INVALID_REVIEW_BLOCK, FixtureError
+from .errors import DUPLICATE_FILE_NAME, FILES_NOT_FOUND, GENERATOR_FAILED, GENERATOR_IMAGE_UNAVAILABLE, INVALID_REVIEW_BLOCK, FixtureError
 from .manifest import Generate
 
 log = logging.getLogger("fixtures")
@@ -97,6 +97,29 @@ def copy_files(repo: Path, patterns: tuple[str, ...], dest: Path) -> list[str]:
                     written.append(_copy_one(f, dest / f.relative_to(prefix)))
             elif src.is_file():
                 written.append(_copy_one(src, dest / src.relative_to(prefix)))
+    return written
+
+
+def place(src: Path, dest: Path, file_paths: str, what: str) -> list[str]:
+    """Move the files built under src into dest: with their paths
+    (file_paths "source"), or each at dest's root ("flat"), refusing two
+    files with the same name. Returns the paths written, relative to dest."""
+    files = sorted(p for p in src.rglob("*") if p.is_file())
+    if file_paths == "flat":
+        seen: dict[str, Path] = {}
+        for f in files:
+            if f.name in seen:
+                raise FixtureError(
+                    f"{what}: {seen[f.name].relative_to(src)} and {f.relative_to(src)} would both be {f.name} "
+                    "with filePaths flat; narrow files, or set filePaths: source", DUPLICATE_FILE_NAME)
+            seen[f.name] = f
+    written = []
+    for f in files:
+        rel = Path(f.name) if file_paths == "flat" else f.relative_to(src)
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(f), target)
+        written.append(str(rel))
     return written
 
 

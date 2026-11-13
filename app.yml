@@ -8,8 +8,8 @@ application:
   name: App Fixtures
   description: >-
     Builds the test inputs an App Store app declares in its app.yml review block
-    (generator commands, committed files or public datasets from Zenodo, Figshare, OSF
-    and OpenNeuro) and writes them laid out as that app reads its input directory.
+    (generator commands, committed files or public datasets from Pennsieve Discover,
+    Zenodo, Figshare, OSF and OpenNeuro) and writes them laid out as that app reads its input directory.
     The first step of a sample run; the sampled app depends on it.
   type: processor
   tags:

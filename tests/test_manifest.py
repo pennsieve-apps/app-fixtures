@@ -65,6 +65,24 @@ review:
     assert m.port_sources["cells"].files == ("sample-input/*.csv",)
     assert m.port_sources["images"].dataset.doi == "10.18112/openneuro.ds000117.v2.0.0"
     assert m.port_sources["metadata"].generate.source.files == ("B0[1-6]_*.fcs",)
+    # Files are laid out flat unless the port says source.
+    assert m.port_sources["cells"].file_paths == "flat" and m.port_sources["images"].file_paths == "flat"
+
+
+def test_file_paths():
+    m = parse(BASE + """
+review:
+  version: 1
+  inputs:
+    cells:
+      files: [sample-input/*.csv]
+      filePaths: flat
+    images:
+      dataset: {doi: 10.18112/openneuro.ds000117.v2.0.0, files: [sub-01/ses-mri/anat/sub-01_ses-mri_T1w.nii.gz]}
+      filePaths: source
+""")
+    assert m.port_sources["cells"].file_paths == "flat"
+    assert m.port_sources["images"].file_paths == "source"
 
 
 @pytest.mark.parametrize(
@@ -76,6 +94,9 @@ review:
         ("review:\n  version: 1\n  inputs:\n    cells: {files: [a], dataset: {doi: 10.1/x}}\n", "exactly one"),
         ("review:\n  version: 1\n  inputs:\n    cells: {dataset: {doi: 10.1/x, url: https://zenodo.org/x}}\n", "exactly one of doi or url"),
         ("review:\n  version: 1\n  generate: {root: linked}\n", "needs a command"),
+        ("review:\n  version: 1\n  inputs:\n    cells: {files: [a], filePaths: nested}\n", "flat or source"),
+        ("review:\n  version: 1\n  inputs:\n    cells: {generate: {command: x}, filePaths: flat}\n", "files and dataset only"),
+        ("review:\n  version: 1\n  inputs:\n    cells: {filePaths: flat}\n", "exactly one"),
     ],
 )
 def test_rejects(review, message):
