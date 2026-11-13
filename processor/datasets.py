@@ -1,5 +1,5 @@
 """Public datasets a review block may name: a DOI or an HTTPS URL on one of
-the allowed hosts (Zenodo, Figshare, OSF, OpenNeuro), optionally narrowed to
+the allowed hosts (Zenodo, Figshare, OSF, OpenNeuro, Pennsieve Discover), optionally narrowed to
 some of its files. Resolved to a file list, then downloaded within a byte
 limit, keeping each file's path within the dataset."""
 from __future__ import annotations
@@ -22,12 +22,18 @@ log = logging.getLogger("fixtures")
 
 USER_AGENT = "pennsieve-app-fixtures/0.1 (+https://github.com/pennsieve-apps/app-fixtures)"
 TIMEOUT = 60
-ALLOWED_HOSTS = ("zenodo.org", "figshare.com", "osf.io", "openneuro.org", "s3.amazonaws.com")
+ALLOWED_HOSTS = ("zenodo.org", "figshare.com", "osf.io", "openneuro.org", "s3.amazonaws.com", "api.pennsieve.io")
 
 DOI_ZENODO = re.compile(r"^10\.5281/zenodo\.(\d+)$")
 DOI_OPENNEURO = re.compile(r"^10\.18112/openneuro\.(ds\d+)\.v([\w.]+)$")
 DOI_FIGSHARE = re.compile(r"^10\.6084/m9\.figshare\.(\d+)(?:\.v(\d+))?$", re.IGNORECASE)
 DOI_OSF = re.compile(r"^10\.17605/osf\.io/(\w+)$", re.IGNORECASE)
+# Pennsieve Discover's DOIs (DataCite prefix 10.26275), e.g. 10.26275/har8-ytia.
+DOI_DISCOVER = re.compile(r"^10\.26275/([a-z0-9]{4}-[a-z0-9]{4})$", re.IGNORECASE)
+DISCOVER_API = "https://api.pennsieve.io/discover"
+# A Discover dataset listed in full for a pattern: refused beyond this many
+# files (name plain paths instead; they are fetched without a listing).
+MAX_DISCOVER_FILES = 20000
 
 
 @dataclass(frozen=True)
@@ -48,17 +54,23 @@ class Resolved:
 # --- HTTP ------------------------------------------------------------------
 
 
-def _request(url: str, method: str = "GET") -> urllib.request.Request:
+def _request(url: str, method: str = "GET", data: bytes | None = None) -> urllib.request.Request:
     host = urllib.parse.urlparse(url).hostname or ""
     if not any(host == h or host.endswith("." + h) for h in ALLOWED_HOSTS):
         raise FixtureError(f"{url}: host {host!r} is not an allowed dataset host ({', '.join(ALLOWED_HOSTS)})", INVALID_REVIEW_BLOCK)
     if urllib.parse.urlparse(url).scheme != "https":
         raise FixtureError(f"{url}: only https is allowed", INVALID_REVIEW_BLOCK)
-    return urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT})
+    headers = {"User-Agent": USER_AGENT, **({"Content-Type": "application/json"} if data is not None else {})}
+    return urllib.request.Request(url, data=data, method=method, headers=headers)
 
 
 def _get_json(url: str) -> dict:
     with urllib.request.urlopen(_request(url), timeout=TIMEOUT) as r:
+        return json.load(r)
+
+
+def _post_json(url: str, body: dict) -> dict:
+    with urllib.request.urlopen(_request(url, "POST", json.dumps(body).encode()), timeout=TIMEOUT) as r:
         return json.load(r)
 
 
@@ -127,6 +139,45 @@ def _osf(node_id: str) -> Resolved:
     return Resolved("osf.io", f"OSF project {node_id}", f"https://osf.io/{node_id}", files)
 
 
+def _discover(dataset_id: int, version: int, patterns: tuple[str, ...]) -> Resolved:
+    """A published Pennsieve Discover dataset version. Its files come from
+    Discover's download manifest, as presigned links to its public S3
+    bucket: for plain paths in `files` directly (no listing), else for the
+    dataset's top-level entries, narrowed by the patterns afterwards."""
+    base = f"{DISCOVER_API}/datasets/{dataset_id}/versions/{version}"
+    wild = [p for p in patterns if any(ch in p for ch in "*?[")]
+    if patterns and not wild:
+        paths = list(patterns)
+    else:
+        paths, offset = [], 0
+        while True:
+            page = _get_json(f"{base}/files/browse?{urllib.parse.urlencode({'path': '', 'limit': 500, 'offset': offset})}")
+            entries = page.get("files") or []
+            paths += [e["path"] for e in entries if e.get("path")]
+            offset += len(entries)
+            if not entries or offset >= int(page.get("totalCount") or 0):
+                break
+    manifest = _post_json(f"{base}/files/download-manifest", {"paths": paths})
+    count = int((manifest.get("header") or {}).get("count") or 0)
+    if count > MAX_DISCOVER_FILES:
+        raise FixtureError(f"Discover dataset {dataset_id} v{version}: {count} files; name the files to fetch with plain paths",
+                           DATASET_TOO_LARGE)
+    files = [RemoteFile(path="/".join([*(f.get("path") or []), f["fileName"]]), url=f["url"],
+                        size=int(f["size"]) if f.get("size") is not None else None)
+             for f in manifest.get("data") or [] if f.get("fileName") and f.get("url")]
+    landing = f"https://discover.pennsieve.io/datasets/{dataset_id}/version/{version}"
+    return Resolved("discover.pennsieve.io", f"Pennsieve Discover dataset {dataset_id} v{version}", landing, files)
+
+
+def _discover_meta(url: str) -> tuple[int, int]:
+    """A Discover dataset's id and version, from its metadata; an embargoed
+    or unpublished one has no public files."""
+    meta = _get_json(url)
+    if meta.get("embargo") or (meta.get("status") and meta["status"] != "PUBLISH_SUCCEEDED"):
+        raise FixtureError(f"Discover dataset {meta.get('id')}: not publicly available", DATASET_UNAVAILABLE)
+    return int(meta["id"]), int(meta["version"])
+
+
 S3_NS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
 
 
@@ -167,9 +218,14 @@ def _openneuro(dataset: str, version: str, patterns: tuple[str, ...]) -> Resolve
 
 
 def _matches(path: str, patterns) -> bool:
+    """A file's path against the review block's patterns: a glob on the path
+    or, without a slash, on the name; a plain path also names a folder and
+    everything in it."""
     name = path.rsplit("/", 1)[-1]
     for p in patterns:
         if fnmatch.fnmatchcase(path, p) or ("/" not in p and fnmatch.fnmatchcase(name, p)):
+            return True
+        if not any(ch in p for ch in "*?[") and path.startswith(p.rstrip("/") + "/"):
             return True
     return False
 
@@ -186,8 +242,12 @@ def resolve(ds: Dataset) -> Resolved:
             res = _figshare(m.group(1), m.group(2))
         elif m := DOI_OSF.match(doi):
             res = _osf(m.group(1))
+        elif DOI_DISCOVER.match(doi):
+            dataset_id, version = _discover_meta(f"{DISCOVER_API}/datasets/doi/{urllib.parse.quote(doi, safe='/')}")
+            res = _discover(dataset_id, version, ds.files)
         else:
-            raise FixtureError(f"DOI {doi} is not on an allowed host (Zenodo, Figshare, OSF, OpenNeuro)", INVALID_REVIEW_BLOCK)
+            raise FixtureError(f"DOI {doi} is not on an allowed host (Zenodo, Figshare, OSF, OpenNeuro, Pennsieve Discover)",
+                               INVALID_REVIEW_BLOCK)
         res.identifier = f"doi:{doi}"
     else:
         url = (ds.url or "").strip()
@@ -200,6 +260,12 @@ def resolve(ds: Dataset) -> Resolved:
             res = _figshare(m.group(1), m.group(2))
         elif host.endswith("osf.io") and (m := re.match(r"^/(\w+)/?$", path)):
             res = _osf(m.group(1))
+        elif host == "discover.pennsieve.io" and (m := re.match(r"^/datasets/(\d+)(?:/version/(\d+))?/?$", path)):
+            if m.group(2):
+                dataset_id, version = int(m.group(1)), int(m.group(2))
+            else:
+                dataset_id, version = _discover_meta(f"{DISCOVER_API}/datasets/{m.group(1)}")
+            res = _discover(dataset_id, version, ds.files)
         else:
             # A single file by URL on an allowed host.
             _request(url)
